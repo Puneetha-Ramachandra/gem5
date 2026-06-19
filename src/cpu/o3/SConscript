@@ -46,6 +46,7 @@ if env['CONF']['BUILD_ISA']:
     SimObject('FUPool.py', sim_objects=['FUPool'])
     SimObject('FuncUnitConfig.py', sim_objects=[])
     SimObject('BaseO3CPU.py', sim_objects=['BaseO3CPU'])
+    SimObject('extra/MicroCPU.py', sim_objects=['MicroCPU'])
     SimObject('IQUnit.py', sim_objects=['IQUnit'])
     SimObject('SMT.py',
         enums=['SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
@@ -70,6 +71,7 @@ if env['CONF']['BUILD_ISA']:
     Source('rob.cc')
     Source('scoreboard.cc')
     Source('store_set.cc')
+    Source('extra/micro_cpu.cc')
     Source('thread_context.cc')
     Source('thread_state.cc')
 
