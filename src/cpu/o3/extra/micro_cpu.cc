@@ -1,3 +1,7 @@
+#include <fstream>
+#include <ios>
+#include <vector>
+
 #include "cpu/o3/extra/micro_cpu.hh"
 #include "cpu/o3/extra/micro_insts.hh"
 #include "cpu/o3/rename.hh"
@@ -90,7 +94,40 @@ MicroCPU::disableDump()
 void
 MicroCPU::playbackStream(const std::string &filename)
 {
-    // TODO: Implement binary playback reader
+    std::ifstream is(filename, std::ios::binary);
+    if (!is.is_open()) {
+        warn("MicroCPU: Could not open playback file %s", filename);
+        return;
+    }
+
+    while (is.peek() != EOF) {
+        uint8_t opcode;
+        int64_t offset;
+        uint8_t rd, rs1, rs2;
+
+        is.read(reinterpret_cast<char*>(&opcode), 1);
+        is.read(reinterpret_cast<char*>(&offset), 8);
+        is.read(reinterpret_cast<char*>(&rd), 1);
+        is.read(reinterpret_cast<char*>(&rs1), 1);
+        is.read(reinterpret_cast<char*>(&rs2), 1);
+
+        StaticInstPtr inst = nullptr;
+        switch (static_cast<MuOpCode>(opcode)) {
+            case MU_ADD: inst = new MuAdd(rs1, rs2, rd); break;
+            case MU_SUB: inst = new MuSub(rs1, rs2, rd); break;
+            case MU_MUL: inst = new MuMul(rs1, rs2, rd); break;
+            case MU_DIV: inst = new MuDiv(rs1, rs2, rd); break;
+            case MU_LD:  inst = new MuLd(rs1, rd, offset); break;
+            case MU_ST:  inst = new MuSt(rs1, rs2, offset); break;
+            default: break;
+        }
+
+        if (inst) {
+            rename.injectedInsts[0].push_back(inst);
+        }
+    }
+    rename.hasInjectedInsts = true;
+    is.close();
 }
 
 void
@@ -103,8 +140,15 @@ MicroCPU::dumpInst(const DynInstPtr &inst)
     if (mu_inst) {
         uint8_t opcode = mu_inst->getOpCode();
         int64_t offset = mu_inst->getOffset();
+        uint8_t rd = mu_inst->getRd();
+        uint8_t rs1 = mu_inst->getRs1();
+        uint8_t rs2 = mu_inst->getRs2();
+
         _dumpStream->stream()->write(reinterpret_cast<const char*>(&opcode), 1);
         _dumpStream->stream()->write(reinterpret_cast<const char*>(&offset), 8);
+        _dumpStream->stream()->write(reinterpret_cast<const char*>(&rd), 1);
+        _dumpStream->stream()->write(reinterpret_cast<const char*>(&rs1), 1);
+        _dumpStream->stream()->write(reinterpret_cast<const char*>(&rs2), 1);
     }
 }
 

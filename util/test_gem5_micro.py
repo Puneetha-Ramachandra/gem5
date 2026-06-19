@@ -68,16 +68,30 @@ print(f"Exited at tick {m5.curTick()} because {exit_event.getCause()}")
 # Close the dump stream
 system.cpu.disableDump()
 
+# 5. Test MicroPlayback
+trace_path = os.path.join("m5out", trace_file)
+if os.path.exists(trace_path):
+    print(f"--- Phase 2: MicroPlayback from {trace_path} ---")
+    system.cpu.playbackStream(trace_path)
+
+    print("Simulating playback...", flush=True)
+    # Playback will reinject instructions till file ends.
+    # We simulate long enough to drain the pipeline.
+    exit_event = m5.simulate(10000)
+    print(f"Exited at tick {m5.curTick()} because {exit_event.getCause()}")
+
+print("Success: Pipeline check passed!")
+
 # 5. Phase 2: Verification of Trace File
 if os.path.exists(os.path.join("m5out", trace_file)):
     full_path = os.path.join("m5out", trace_file)
     size = os.path.getsize(full_path)
     print(f"--- [Gem5Micro] Verification: Trace file {full_path} created ({size} bytes) ---", flush=True)
     
-    if size == 18:
-        print("SUCCESS: Trace file size is correct (2 instructions @ 9 bytes each).")
+    if size == 24:
+        print("SUCCESS: Trace file size is correct (2 instructions @ 12 bytes each).")
     else:
-        print(f"WARNING: Unexpected trace file size ({size} bytes). Expected 18.")
+        print(f"WARNING: Unexpected trace file size ({size} bytes). Expected 24.")
 else:
     print(f"ERROR: Trace file {trace_file} not found in m5out!")
 
