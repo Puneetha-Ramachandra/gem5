@@ -10,6 +10,7 @@
 #include "cpu/o3/lsq_unit.hh"
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/cpu.hh"
+#include "base/logging.hh"
 #include "base/output.hh"
 #include "sim/sim_exit.hh"
 
@@ -21,14 +22,15 @@ namespace o3
 MicroCPU::MicroCPU(const MicroCPUParams &params)
     : CPU(params), _dumpStream(nullptr), _dumpEnabled(false)
 {
+    fatal_if(params.numThreads != 1,
+        "MicroCPU only supports single-threaded execution (numThreads=1)");
 }
 
 void
 MicroCPU::injectSequence(const std::vector<StaticInstPtr> &seq)
 {
-    for (auto &inst : seq) {
+    for (auto &inst : seq)
         rename.injectedInsts[0].push_back(inst);
-    }
     rename.hasInjectedInsts = true;
 }
 
@@ -110,6 +112,12 @@ MicroCPU::playbackStream(const std::string &filename)
         is.read(reinterpret_cast<char*>(&rd), 1);
         is.read(reinterpret_cast<char*>(&rs1), 1);
         is.read(reinterpret_cast<char*>(&rs2), 1);
+
+        if (!is) {
+            warn("MicroCPU: playbackStream truncated read in %s; "
+                 "ignoring partial record", filename);
+            break;
+        }
 
         StaticInstPtr inst = nullptr;
         switch (static_cast<MuOpCode>(opcode)) {

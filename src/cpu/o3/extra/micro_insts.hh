@@ -10,11 +10,14 @@
 #include <string>
 #include <vector>
 
+#include "arch/generic/memhelpers.hh"
 #include "arch/riscv/regs/int.hh"
+#include "base/logging.hh"
 #include "cpu/reg_class.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/exec_context.hh"
 #include "mem/packet.hh"
+#include "mem/request.hh"
 
 namespace gem5
 {
@@ -89,6 +92,14 @@ class MicroStaticInst : public StaticInst, public MicroStaticInstBase
     }
 };
 
+static inline void
+checkMuRegIdx(const char *mnem, const char *field, RegIndex idx)
+{
+    fatal_if(idx >= RiscvISA::int_reg::NumRegs,
+        "%s: register index %s=%u out of range (max %u)",
+        mnem, field, idx, RiscvISA::int_reg::NumRegs - 1);
+}
+
 /** Integer addition: rd = rs1 + rs2 */
 class MuAdd : public MicroStaticInst<2, 1>
 {
@@ -96,6 +107,9 @@ class MuAdd : public MicroStaticInst<2, 1>
     MuAdd(RegIndex rs1, RegIndex rs2, RegIndex rd)
         : MicroStaticInst("mu_add", IntAluOp)
     {
+        checkMuRegIdx("mu_add", "rs1", rs1);
+        checkMuRegIdx("mu_add", "rs2", rs2);
+        checkMuRegIdx("mu_add", "rd",  rd);
         this->rs1_idx = rs1;
         this->rs2_idx = rs2;
         this->rd_idx = rd;
@@ -127,6 +141,9 @@ class MuSub : public MicroStaticInst<2, 1>
     MuSub(RegIndex rs1, RegIndex rs2, RegIndex rd)
         : MicroStaticInst("mu_sub", IntAluOp)
     {
+        checkMuRegIdx("mu_sub", "rs1", rs1);
+        checkMuRegIdx("mu_sub", "rs2", rs2);
+        checkMuRegIdx("mu_sub", "rd",  rd);
         this->rs1_idx = rs1;
         this->rs2_idx = rs2;
         this->rd_idx = rd;
@@ -158,6 +175,9 @@ class MuMul : public MicroStaticInst<2, 1>
     MuMul(RegIndex rs1, RegIndex rs2, RegIndex rd)
         : MicroStaticInst("mu_mul", IntMultOp)
     {
+        checkMuRegIdx("mu_mul", "rs1", rs1);
+        checkMuRegIdx("mu_mul", "rs2", rs2);
+        checkMuRegIdx("mu_mul", "rd",  rd);
         this->rs1_idx = rs1;
         this->rs2_idx = rs2;
         this->rd_idx = rd;
@@ -189,6 +209,9 @@ class MuDiv : public MicroStaticInst<2, 1>
     MuDiv(RegIndex rs1, RegIndex rs2, RegIndex rd)
         : MicroStaticInst("mu_div", IntDivOp)
     {
+        checkMuRegIdx("mu_div", "rs1", rs1);
+        checkMuRegIdx("mu_div", "rs2", rs2);
+        checkMuRegIdx("mu_div", "rd",  rd);
         this->rs1_idx = rs1;
         this->rs2_idx = rs2;
         this->rd_idx = rd;
@@ -213,13 +236,17 @@ class MuDiv : public MicroStaticInst<2, 1>
     }
 };
 
-/** Load instruction: rd = Mem[rs1 + offset] */
+/** Load instruction: rd = Mem[rs1 + offset] (64-bit, little-endian) */
 class MuLd : public MicroStaticInst<1, 1>
 {
   public:
+    Request::Flags memAccessFlags;
+
     MuLd(RegIndex rs1, RegIndex rd, int64_t offset)
-        : MicroStaticInst("mu_ld", IntAluOp)
+        : MicroStaticInst("mu_ld", MemReadOp), memAccessFlags(0)
     {
+        checkMuRegIdx("mu_ld", "rs1", rs1);
+        checkMuRegIdx("mu_ld", "rd",  rd);
         this->rs1_idx = rs1;
         this->rd_idx = rd;
         this->offset = offset;
@@ -227,35 +254,84 @@ class MuLd : public MicroStaticInst<1, 1>
         destRegs[0] = RiscvISA::intRegClass[rd];
         _numTypedDestRegs[IntRegClass] = 1;
         flags[IsLoad] = true;
+        flags[IsMemRef] = true;
     }
 
     Fault execute(ExecContext *xc, trace::InstRecord *traceData) const override
     {
-        // Simple functional model of load
+        Addr EA = xc->getRegOperand(this, 0) + offset;
+        uint64_t mem = 0;
+        Fault fault = readMemAtomicLE(xc, traceData, EA, mem, memAccessFlags);
+        if (fault == NoFault) {
+            void (ExecContext::*setter)(const StaticInst*, int, RegVal) =
+                &ExecContext::setRegOperand;
+            (xc->*setter)(this, 0, mem);
+        }
+        return fault;
+    }
+
+    Fault initiateAcc(ExecContext *xc,
+                      trace::InstRecord *traceData) const override
+    {
+        Addr EA = xc->getRegOperand(this, 0) + offset;
+        uint64_t mem = 0;
+        return initiateMemRead(xc, traceData, EA, mem, memAccessFlags);
+    }
+
+    Fault completeAcc(PacketPtr pkt, ExecContext *xc,
+                      trace::InstRecord *traceData) const override
+    {
+        uint64_t mem = 0;
+        getMemLE(pkt, mem, traceData);
+        void (ExecContext::*setter)(const StaticInst*, int, RegVal) =
+            &ExecContext::setRegOperand;
+        (xc->*setter)(this, 0, mem);
         return NoFault;
     }
 };
 
-/** Store instruction: Mem[rs1 + offset] = rs2 */
+/** Store instruction: Mem[rs1 + offset] = rs2 (64-bit, little-endian) */
 class MuSt : public MicroStaticInst<2, 0>
 {
   public:
+    Request::Flags memAccessFlags;
+
     MuSt(RegIndex rs1, RegIndex rs2, int64_t offset)
-        : MicroStaticInst("mu_st", IntAluOp)
+        : MicroStaticInst("mu_st", MemWriteOp), memAccessFlags(0)
     {
+        checkMuRegIdx("mu_st", "rs1", rs1);
+        checkMuRegIdx("mu_st", "rs2", rs2);
         this->rs1_idx = rs1;
         this->rs2_idx = rs2;
         this->offset = offset;
         srcRegs[0] = RiscvISA::intRegClass[rs1];
         srcRegs[1] = RiscvISA::intRegClass[rs2];
         flags[IsStore] = true;
+        flags[IsMemRef] = true;
     }
 
     MuOpCode getOpCode() const override { return MU_ST; }
 
     Fault execute(ExecContext *xc, trace::InstRecord *traceData) const override
     {
-        // Simple functional model of store
+        Addr EA = xc->getRegOperand(this, 0) + offset;
+        uint64_t data = xc->getRegOperand(this, 1);
+        return writeMemAtomicLE(xc, traceData, data, EA, memAccessFlags,
+                                nullptr);
+    }
+
+    Fault initiateAcc(ExecContext *xc,
+                      trace::InstRecord *traceData) const override
+    {
+        Addr EA = xc->getRegOperand(this, 0) + offset;
+        uint64_t data = xc->getRegOperand(this, 1);
+        return writeMemTimingLE(xc, traceData, data, EA, memAccessFlags,
+                                nullptr);
+    }
+
+    Fault completeAcc(PacketPtr pkt, ExecContext *xc,
+                      trace::InstRecord *traceData) const override
+    {
         return NoFault;
     }
 };

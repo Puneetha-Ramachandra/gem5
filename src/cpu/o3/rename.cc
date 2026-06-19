@@ -840,27 +840,32 @@ Rename::sortInsts()
     }
 
     if (hasInjectedInsts) {
+        // Synthetic PC base: unmapped region, 4-byte aligned, distinct from
+        // any real program address so PC-keyed structures don't alias.
+        static constexpr Addr SYNTH_PC_BASE = 0xDEAD000000ULL;
+
         for (ThreadID tid = 0; tid < numThreads; tid++) {
             while (!injectedInsts[tid].empty()) {
                 StaticInstPtr static_inst = injectedInsts[tid].front();
                 injectedInsts[tid].pop_front();
 
-                // Create a temporary PC state
-                std::unique_ptr<PCStateBase> pc_ptr(cpu->pcState(tid).clone());
+                // Give each injected op a unique synthetic PC by cloning
+                // the ISA-correct PCState type then overwriting the address.
+                InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
+                std::unique_ptr<PCStateBase> pc_ptr(
+                    cpu->pcState(tid).clone());
+                pc_ptr->set(SYNTH_PC_BASE + seq_num * 4);
 
-                // Create DynInst following the pattern in Fetch::buildInst
                 DynInst::Arrays arrays;
                 arrays.numSrcs = static_inst->numSrcRegs();
                 arrays.numDests = static_inst->numDestRegs();
 
-                InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
                 DynInstPtr inst = new (arrays) DynInst(
-                    arrays, static_inst, nullptr, *pc_ptr, *pc_ptr, seq_num, cpu);
-                
+                    arrays, static_inst, nullptr, *pc_ptr, *pc_ptr,
+                    seq_num, cpu);
+
                 inst->threadNumber = tid;
                 inst->setThreadState(cpu->thread[tid]);
-                
-                // Add to CPU's list of instructions
                 inst->setInstListIt(cpu->addInst(inst));
 
                 insts[tid].push_back(inst);
