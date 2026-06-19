@@ -86,6 +86,7 @@ Rename::Rename(CPU *_cpu, const BaseO3CPUParams &params)
       commitToRenameDelay(params.commitToRenameDelay),
       renameWidth(params.renameWidth),
       numThreads(params.numThreads),
+      hasInjectedInsts(false),
       stats(_cpu)
 {
     if (renameWidth > MaxWidth)
@@ -106,6 +107,9 @@ Rename::Rename(CPU *_cpu, const BaseO3CPUParams &params)
         stalls[tid] = {false, false};
         serializeInst[tid] = nullptr;
         serializeOnNextInst[tid] = false;
+    }
+    for (uint32_t tid = 0; tid < MaxThreads; tid++) {
+        injectedInsts[tid].clear();
     }
 }
 
@@ -762,6 +766,9 @@ Rename::renameInsts(ThreadID tid)
         toIEW->insts[toIEWIndex] = inst;
         ++(toIEW->size);
 
+        // MicroDump hook
+        cpu->dumpInst(inst);
+
         // Increment which instruction we're on.
         ++toIEWIndex;
 
@@ -830,6 +837,36 @@ Rename::sortInsts()
         const DynInstPtr &inst = fromDecode->insts[i];
         insts[inst->threadNumber].push_back(inst);
         inst->renameTick = curTick() - inst->fetchTick;
+    }
+
+    if (hasInjectedInsts) {
+        for (ThreadID tid = 0; tid < numThreads; tid++) {
+            while (!injectedInsts[tid].empty()) {
+                StaticInstPtr static_inst = injectedInsts[tid].front();
+                injectedInsts[tid].pop_front();
+
+                // Create a temporary PC state
+                std::unique_ptr<PCStateBase> pc_ptr(cpu->pcState(tid).clone());
+
+                // Create DynInst following the pattern in Fetch::buildInst
+                DynInst::Arrays arrays;
+                arrays.numSrcs = static_inst->numSrcRegs();
+                arrays.numDests = static_inst->numDestRegs();
+
+                InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
+                DynInstPtr inst = new (arrays) DynInst(
+                    arrays, static_inst, nullptr, *pc_ptr, *pc_ptr, seq_num, cpu);
+                
+                inst->threadNumber = tid;
+                inst->setThreadState(cpu->thread[tid]);
+                
+                // Add to CPU's list of instructions
+                inst->setInstListIt(cpu->addInst(inst));
+
+                insts[tid].push_back(inst);
+            }
+        }
+        hasInjectedInsts = false;
     }
 }
 

@@ -42,16 +42,20 @@
 #ifndef __CPU_O3_RENAME_HH__
 #define __CPU_O3_RENAME_HH__
 
+#include <deque>
 #include <list>
 #include <utility>
 
 #include "base/statistics.hh"
+#include "base/types.hh"
 #include "cpu/o3/comm.hh"
 #include "cpu/o3/commit.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/static_inst.hh"
 #include "cpu/o3/free_list.hh"
 #include "cpu/o3/iew.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/rename_map.hh"
 #include "cpu/timebuf.hh"
 #include "sim/probe/probe.hh"
 
@@ -62,6 +66,8 @@ struct BaseO3CPUParams;
 
 namespace o3
 {
+
+class CPU;
 
 /**
  * Rename handles both single threaded and SMT rename. Its
@@ -83,6 +89,10 @@ class Rename
     // using a deque instead of a queue. (Most other stages use a
     // queue)
     typedef std::deque<DynInstPtr> InstQueue;
+    /** Queue of instructions injected directly into Rename. */
+    std::deque<StaticInstPtr> injectedInsts[MaxThreads];
+    /** Flag to indicate that there are injected instructions. */
+    bool hasInjectedInsts;
 
   public:
     /** Overall rename status. Used to determine if the CPU can
@@ -460,7 +470,6 @@ class Rename
      * after squashing. */
     bool resumeUnblocking;
 
-    /** The number of threads active in rename. */
     ThreadID numThreads;
 
     /** The maximum skid buffer size. */
