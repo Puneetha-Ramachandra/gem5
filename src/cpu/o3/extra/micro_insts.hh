@@ -255,7 +255,6 @@ class MuLd : public MicroStaticInst<1, 1>
         destRegs[0] = RiscvISA::intRegClass[rd];
         _numTypedDestRegs[IntRegClass] = 1;
         flags[IsLoad] = true;
-        flags[IsMemRef] = true;
     }
 
     Fault execute(ExecContext *xc, trace::InstRecord *traceData) const override
@@ -308,7 +307,6 @@ class MuSt : public MicroStaticInst<2, 0>
         srcRegs[0] = RiscvISA::intRegClass[rs1];
         srcRegs[1] = RiscvISA::intRegClass[rs2];
         flags[IsStore] = true;
-        flags[IsMemRef] = true;
     }
 
     MuOpCode getOpCode() const override { return MU_ST; }

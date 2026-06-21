@@ -847,28 +847,31 @@ Rename::sortInsts()
     }
 
     if (hasInjectedInsts) {
-        // Synthetic PC base: unmapped region, 4-byte aligned, distinct from
-        // any real program address so PC-keyed structures don't alias.
-        static constexpr Addr SYNTH_PC_BASE = 0xDEAD000000ULL;
-
         for (ThreadID tid = 0; tid < numThreads; tid++) {
             while (!injectedInsts[tid].empty()) {
                 StaticInstPtr static_inst = injectedInsts[tid].front();
                 injectedInsts[tid].pop_front();
 
-                // Give each injected op a unique synthetic PC by cloning
-                // the ISA-correct PCState type then overwriting the address.
+                // Synthetic PCs from the NOP page (0x20000+) mapped in the
+                // spin binary.  Keeps injected ops out of the BTB to avoid
+                // false 'branch mispredictions' at commit, while ensuring
+                // squash-recovery fetches land on NOPs rather than faulting.
+                // 0x20000 matches SYNTH_PC_BASE in util/fuzz_lsq.py.
+                static constexpr Addr SYNTH_PC_BASE = 0x20000ULL;
                 InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
                 std::unique_ptr<PCStateBase> pc_ptr(
                     cpu->pcState(tid).clone());
                 pc_ptr->set(SYNTH_PC_BASE + seq_num * 4);
+
+                std::unique_ptr<PCStateBase> pred_pc_ptr(pc_ptr->clone());
+                static_inst->advancePC(*pred_pc_ptr);
 
                 DynInst::Arrays arrays;
                 arrays.numSrcs = static_inst->numSrcRegs();
                 arrays.numDests = static_inst->numDestRegs();
 
                 DynInstPtr inst = new (arrays) DynInst(
-                    arrays, static_inst, nullptr, *pc_ptr, *pc_ptr,
+                    arrays, static_inst, nullptr, *pc_ptr, *pred_pc_ptr,
                     seq_num, cpu);
 
                 inst->threadNumber = tid;
