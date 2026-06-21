@@ -48,3 +48,17 @@ class MicroCPU(RiscvO3CPU):
     @cxxMethod
     def injectSt(self, rs1, rs2, offset):
         pass
+
+    @cxxMethod
+    def injectSquash(self):
+        pass
+
+    # Streaming playback — feeds one instruction per rename slot per tick
+    # from an open trace file, preserving O3 timing fidelity.
+    @cxxMethod
+    def startStreamingPlayback(self, path):
+        pass
+
+    @cxxMethod
+    def stopStreamingPlayback(self):
+        pass

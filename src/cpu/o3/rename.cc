@@ -45,6 +45,7 @@
 
 #include "cpu/o3/cpu.hh"
 #include "cpu/o3/dyn_inst.hh"
+#include "cpu/o3/extra/micro_cpu.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/reg_class.hh"
 #include "debug/Activity.hh"
@@ -832,6 +833,12 @@ Rename::skidInsert(ThreadID tid)
 void
 Rename::sortInsts()
 {
+    // Streaming playback: pull up to renameWidth ops from the open trace
+    // file each tick so replay has the same cycle-level timing as the
+    // original execution (paper §2, MicroPlayback).
+    if (auto *mcpu = dynamic_cast<MicroCPU*>(cpu))
+        mcpu->drainStreamIntoRename(renameWidth);
+
     int insts_from_decode = fromDecode->size;
     for (int i = 0; i < insts_from_decode; ++i) {
         const DynInstPtr &inst = fromDecode->insts[i];

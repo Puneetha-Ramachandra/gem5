@@ -6,6 +6,7 @@
 #ifndef __CPU_O3_MICRO_CPU_HH__
 #define __CPU_O3_MICRO_CPU_HH__
 
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -47,9 +48,32 @@ class MicroCPU : public CPU
     void injectLd(RegIndex rs1, RegIndex rd, int64_t offset);
     void injectSt(RegIndex rs1, RegIndex rs2, int64_t offset);
 
+    /**
+     * Squash all in-flight instructions for thread 0 via the commit stage,
+     * independent of the branch predictor.  Models the speculative window
+     * teardown described in the paper's security fuzzing use-case.
+     */
+    void injectSquash();
+
+    /**
+     * Open a MicroISA binary trace for streaming playback.  Unlike the
+     * legacy playbackStream() bulk-load, this keeps the file open and
+     * feeds one instruction per Rename slot each tick, preserving O3
+     * timing fidelity as described in the paper.
+     */
+    void startStreamingPlayback(const std::string &path);
+    void stopStreamingPlayback();
+
+    /** Feed up to maxInsts injected ops from the open stream this tick. */
+    void drainStreamIntoRename(unsigned maxInsts);
+
+    bool isStreamingPlayback() const { return _playbackStream.is_open(); }
+
   private:
     OutputStream* _dumpStream = nullptr;
     bool _dumpEnabled = false;
+
+    std::ifstream _playbackStream;
 };
 
 } // namespace o3
