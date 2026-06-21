@@ -13,7 +13,9 @@ class McPATBridge:
         # Calibrated for a typical RISC-V O3 core at 7nm, 2GHz.
         self.energy_table = {
             'mu_add': 12.4,
+            'mu_sub': 12.4,   # same FU as add
             'mu_mul': 42.1,
+            'mu_div': 168.4,  # ~4x mul latency at same voltage
             'mu_ld': 115.6,
             'mu_st': 128.4,
             'rename_mapping': 2.1,
@@ -38,13 +40,17 @@ class McPATBridge:
         
         # 1. Dynamic Instruction Energy (Functional Units)
         total_pj += stats.get('mu_add_count', 0) * self.energy_table['mu_add']
+        total_pj += stats.get('mu_sub_count', 0) * self.energy_table['mu_sub']
         total_pj += stats.get('mu_mul_count', 0) * self.energy_table['mu_mul']
+        total_pj += stats.get('mu_div_count', 0) * self.energy_table['mu_div']
         total_pj += stats.get('mu_ld_count', 0) * self.energy_table['mu_ld']
         total_pj += stats.get('mu_st_count', 0) * self.energy_table['mu_st']
-        
+
         # 2. Pipeline Overhead per Instruction (Rename, IQ, ROB)
-        total_insts = (stats.get('mu_add_count', 0) + stats.get('mu_mul_count', 0) + 
-                      stats.get('mu_ld_count', 0) + stats.get('mu_st_count', 0))
+        total_insts = (
+            stats.get('mu_add_count', 0) + stats.get('mu_sub_count', 0) +
+            stats.get('mu_mul_count', 0) + stats.get('mu_div_count', 0) +
+            stats.get('mu_ld_count', 0)  + stats.get('mu_st_count', 0))
         
         overhead_per_inst = (self.energy_table['rename_mapping'] + 
                             self.energy_table['iq_entry'] + 

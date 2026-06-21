@@ -46,7 +46,8 @@ def apply_variation_model(system, cpu_sigma=0.1, cache_sigma=0.05):
     """
     Apply silicon variation model to the entire system.
     """
-    for cpu in system.cpu:
+    cpus = system.cpu if isinstance(system.cpu, list) else [system.cpu]
+    for cpu in cpus:
         perturb_fu_latencies(cpu, cpu_sigma)
         if hasattr(cpu, 'icache'):
             perturb_cache_parameters(cpu.icache, cache_sigma)

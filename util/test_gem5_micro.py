@@ -68,31 +68,39 @@ print(f"Exited at tick {m5.curTick()} because {exit_event.getCause()}")
 # Close the dump stream
 system.cpu.disableDump()
 
-# 5. Test MicroPlayback
+# 5. Test MicroPlayback (streaming: one op per rename slot per tick)
 trace_path = os.path.join("m5out", trace_file)
 if os.path.exists(trace_path):
-    print(f"--- Phase 2: MicroPlayback from {trace_path} ---")
-    system.cpu.playbackStream(trace_path)
+    print(f"--- Phase 2: MicroPlayback (streaming) from {trace_path} ---")
+    system.cpu.startStreamingPlayback(trace_path)
 
-    print("Simulating playback...", flush=True)
-    # Playback will reinject instructions till file ends.
-    # We simulate long enough to drain the pipeline.
+    print("Simulating streaming playback...", flush=True)
     exit_event = m5.simulate(10000)
     print(f"Exited at tick {m5.curTick()} because {exit_event.getCause()}")
+    system.cpu.stopStreamingPlayback()
 
 print("Success: Pipeline check passed!")
 
 # 5. Phase 2: Verification of Trace File
-if os.path.exists(os.path.join("m5out", trace_file)):
-    full_path = os.path.join("m5out", trace_file)
+RECORD_SIZE = 12  # 1 (opcode) + 8 (offset) + 1 (rd) + 1 (rs1) + 1 (rs2)
+full_path = os.path.join("m5out", trace_file)
+if os.path.exists(full_path):
     size = os.path.getsize(full_path)
-    print(f"--- [Gem5Micro] Verification: Trace file {full_path} created ({size} bytes) ---", flush=True)
-    
-    if size == 24:
-        print("SUCCESS: Trace file size is correct (2 instructions @ 12 bytes each).")
+    print(f"--- [Gem5Micro] Verification: Trace file {full_path} ({size} bytes) ---",
+          flush=True)
+    if size == 0:
+        print("ERROR: Trace file is empty — injected ops never reached rename.")
+        sys.exit(1)
+    elif size % RECORD_SIZE != 0:
+        print(f"ERROR: Trace file size {size} is not a multiple of {RECORD_SIZE} bytes.")
+        sys.exit(1)
+    elif size < 2 * RECORD_SIZE:
+        print(f"WARNING: Only {size // RECORD_SIZE} record(s) captured; expected at least 2.")
     else:
-        print(f"WARNING: Unexpected trace file size ({size} bytes). Expected 24.")
+        print(f"SUCCESS: {size // RECORD_SIZE} record(s) captured "
+              f"({size} bytes, {RECORD_SIZE} bytes/record).")
 else:
-    print(f"ERROR: Trace file {trace_file} not found in m5out!")
+    print(f"ERROR: Trace file {full_path} not found!")
+    sys.exit(1)
 
 print("--- [Gem5Micro] Verification script finished ---")
