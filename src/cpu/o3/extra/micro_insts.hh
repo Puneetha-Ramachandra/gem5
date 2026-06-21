@@ -17,6 +17,7 @@
 #include "cpu/static_inst.hh"
 #include "cpu/exec_context.hh"
 #include "mem/packet.hh"
+#include "mem/packet_access.hh"
 #include "mem/request.hh"
 
 namespace gem5
