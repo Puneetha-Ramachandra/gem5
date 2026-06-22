@@ -130,6 +130,7 @@ MicroCPU::drainStreamIntoRename(unsigned maxInsts)
         }
 
         if (inst) {
+            inform("[%lu] Replaying %s from stream\n", curTick(), inst->disassemble(0).c_str());
             rename.injectedInsts[0].push_back(inst);
             rename.hasInjectedInsts = true;
             ++count;

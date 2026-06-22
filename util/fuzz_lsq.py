@@ -135,77 +135,93 @@ system.mem_ctrl.port = system.membus.mem_side_ports
 
 root = Root(full_system=False, system=system)
 
-print("--- [fuzz_lsq] Instantiating Simulation ---", flush=True)
+print(flush=True)
+print("=" * 62, flush=True)
+print("  gem5-micro: LSQ Fuzzing Case Study  (paper section 4)", flush=True)
+print("=" * 62, flush=True)
 m5.instantiate()
 
 addr_reg = 2   # x2 = sp, valid mapped stack address in SE mode
 data_reg = 1   # x1 (store data — value doesn't matter for forwarding/lsqFull)
 SQ_SIZE  = 8   # matches SQEntries above
 
-# Wait for the initial squashFromTC (CPU init) to clear.  At tick 0 the TC
-# squash fires and kills any ops already in the pipeline; by tick 2000 the
-# squash has fully propagated and the spin loop is running cleanly.
-print("--- [fuzz_lsq] Waiting for TC squash to clear ---", flush=True)
-m5.simulate(100000)  # clears TC squash (tick 0) + first jal mispred with SimpleMemory
+# Warm up: clear TC squash + spin-loop branch predictor training
+print(flush=True)
+print("  Warming up pipeline ...", flush=True)
+m5.simulate(100000)
 m5.stats.reset()
 
-# --- Baseline Phase: Run without instruction injection ---
-print("--- [fuzz_lsq] Running Baseline Phase (No Injection) ---", flush=True)
+# ---- Baseline: spin loop only, no injection --------------------------------
+print(flush=True)
+print("  Baseline (no injection) — running spin loop ...", flush=True)
 exit_event = m5.simulate(500000)
-print(f"--- [fuzz_lsq] Baseline Simulation Finished: {exit_event.getCause()} ---", flush=True)
+print(f"  Done: {exit_event.getCause()}", flush=True)
 m5.stats.dump()
 
 # Reset stats for the injection run
 m5.stats.reset()
 
-# --- Injection Phase ---
-# Phase 1: inject exactly SQ_SIZE stores and simulate 3 cycles (3000 ticks) — enough for
-# dispatch (SQ fills to SQ_SIZE/SQ_SIZE) but not enough to commit
-# (commit requires execute + writeback + cache-write ≥ ~8 cycles from dispatch).
-print("--- [fuzz_lsq] Injection Phase 1: Fill SQ ---", flush=True)
+# ---- Phase 1: fill SQ with SQ_SIZE stores ----------------------------------
+# Simulate just 3 cycles after injection so the stores dispatch (SQ fills to
+# SQ_SIZE/SQ_SIZE) but haven't committed yet.  The SQ stays full when Phase 2
+# stores arrive, triggering SQFullEvents.
+print(flush=True)
+print("  Phase 1 — fill SQ with stores:", flush=True)
 for i in range(SQ_SIZE):
-    system.cpu.injectSt(addr_reg, data_reg, -8 - i * 8)
+    offset = -8 - i * 8
+    print(f"    [ST] Mem[sp + {offset}] = x1  ->  SQ[{i}]", flush=True)
+    system.cpu.injectSt(addr_reg, data_reg, offset)
+print(f"  SQ is now {SQ_SIZE}/{SQ_SIZE} full — dispatching ...", flush=True)
 
 m5.simulate(3000)
 
-# Phase 2: inject aliasing loads first (so they rename/dispatch and forward
-# from the Phase 1 stores still in the SQ), followed by more stores to
-# fill the SQ and trigger SQFullEvents.
-print("--- [fuzz_lsq] Injection Phase 2: Trigger lsqFull + forwarding ---", flush=True)
+# ---- Phase 2: aliasing loads + overflow stores -----------------------------
+# Loads first: they alias with Phase 1 stores still in the SQ and get
+# forwarded directly (forwLoads events).  Extra stores overflow the full SQ
+# (SQFullEvents).
+print(flush=True)
+print("  Phase 2 — aliasing loads (forwarding) + overflow stores (SQ full):", flush=True)
+
 for i in range(SQ_SIZE):
-    system.cpu.injectLd(addr_reg, (i % 6) + 4, -8 - i * 8)
+    offset = -8 - i * 8
+    dest   = (i % 6) + 4
+    print(f"    [LD] x{dest} = Mem[sp + {offset}]  (aliases ST above -> forward)", flush=True)
+    system.cpu.injectLd(addr_reg, dest, offset)
 
 for i in range(SQ_SIZE, SQ_SIZE + 4):
-    system.cpu.injectSt(addr_reg, data_reg, -8 - i * 8)
+    offset = -8 - i * 8
+    print(f"    [ST] Mem[sp + {offset}] = x1  ->  SQ FULL -> SQFullEvent", flush=True)
+    system.cpu.injectSt(addr_reg, data_reg, offset)
 
-print("--- [fuzz_lsq] Simulating Injection Phase ---", flush=True)
+print(flush=True)
+print("  Simulating ...", flush=True)
 exit_event = m5.simulate(500000)
-print(f"--- [fuzz_lsq] Injection Simulation Finished: {exit_event.getCause()} ---", flush=True)
+print(f"  Done: {exit_event.getCause()}", flush=True)
 m5.stats.dump()
 
-# --- Validation & Comparison (paper §4) ---
+# ---- Validation & comparison table (paper §4) ------------------------------
 stats_path = os.path.join("m5out", "stats.txt")
 
-# Parse baseline stats (first stats block, index 0)
-base_forw_loads = parse_stat(stats_path, "system.cpu.lsq0.forwLoads", 0)
-base_lsq_full = parse_stat(stats_path, "system.cpu.rename.SQFullEvents", 0)
+base_forw = parse_stat(stats_path, "system.cpu.lsq0.forwLoads",         0)
+base_full = parse_stat(stats_path, "system.cpu.rename.SQFullEvents",    0)
+inj_forw  = parse_stat(stats_path, "system.cpu.lsq0.forwLoads",         1)
+inj_full  = parse_stat(stats_path, "system.cpu.rename.SQFullEvents",    1)
 
-# Parse injected stats (second stats block, index 1)
-inj_forw_loads = parse_stat(stats_path, "system.cpu.lsq0.forwLoads", 1)
-inj_lsq_full = parse_stat(stats_path, "system.cpu.rename.SQFullEvents", 1)
+W = max(len(str(base_forw)), len(str(inj_forw)),
+        len(str(base_full)), len(str(inj_full)), 8)
 
-# Print comparison table
-print("", flush=True)
-print("                     baseline    injected", flush=True)
-print(f" lsq0.forwLoads           {base_forw_loads}          {inj_forw_loads}", flush=True)
-print(f" rename.SQFullEvents       {base_lsq_full}         {inj_lsq_full}", flush=True)
-print("", flush=True)
+print(flush=True)
+print(f"  {'stat':<26}  {'baseline':>{W}}  {'injected':>{W}}", flush=True)
+print(f"  {'-'*26}  {'-'*W}  {'-'*W}", flush=True)
+print(f"  {'lsq0.forwLoads':<26}  {base_forw:>{W}}  {inj_forw:>{W}}", flush=True)
+print(f"  {'rename.SQFullEvents':<26}  {base_full:>{W}}  {inj_full:>{W}}", flush=True)
+print(flush=True)
 
 failures = []
-if inj_forw_loads == 0:
-    failures.append(f"forwLoads == 0 in injected run; expected > 0")
-if inj_lsq_full == 0:
-    failures.append(f"SQFullEvents == 0 in injected run; expected > 0")
+if inj_forw == 0:
+    failures.append("forwLoads == 0 in injected run; expected > 0")
+if inj_full == 0:
+    failures.append("SQFullEvents == 0 in injected run; expected > 0")
 
 if failures:
     for msg in failures:
