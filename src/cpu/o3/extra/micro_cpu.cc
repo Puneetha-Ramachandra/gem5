@@ -21,7 +21,8 @@ namespace o3
 {
 
 MicroCPU::MicroCPU(const MicroCPUParams &params)
-    : CPU(params), _dumpStream(nullptr), _dumpEnabled(false)
+    : CPU(params), _dumpStream(nullptr), _dumpEnabled(false),
+      _synthPcBase(params.synth_pc_base)
 {
     fatal_if(params.numThreads != 1,
         "MicroCPU only supports single-threaded execution (numThreads=1)");

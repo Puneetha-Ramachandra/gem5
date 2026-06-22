@@ -62,3 +62,6 @@ class MicroCPU(RiscvO3CPU):
     @cxxMethod
     def stopStreamingPlayback(self):
         pass
+
+    synth_pc_base = Param.Addr(0x20000, "Synthetic PC base address for micro-op injection")
+

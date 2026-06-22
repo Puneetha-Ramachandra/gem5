@@ -10,31 +10,11 @@ import m5
 from m5.objects import *
 from m5.objects.MicroCPU import MicroCPU
 
-# Must match SYNTH_PC_BASE in src/cpu/o3/rename.cc
-SYNTH_PC_BASE = 0x20000
+# Include util dir to import shared micro_elf library
+sys.path.append(os.path.dirname(__file__))
+from micro_elf import make_spin_elf
+
 RECORD_SIZE   = 12  # 1B opcode + 8B offset + 1B rd + 1B rs1 + 1B rs2
-
-
-def make_riscv_spin_elf(path):
-    """Two-segment ELF: spin loop at 0x10000, NOP page at 0x20000.
-    The NOP page is the synthetic-PC landing zone for injected ops."""
-    SPIN_ADDR = 0x10000
-    NOP_ADDR  = SYNTH_PC_BASE
-    SPIN_CODE = struct.pack('<I', 0x0000006f) * 1024   # jal x0,0  x 1024
-    NOP_CODE  = struct.pack('<I', 0x00000013) * 1024   # addi x0,x0,0 x 1024
-
-    e_ident = b'\x7fELF\x02\x01\x01\x00' + b'\x00' * 8
-    elf_hdr = struct.pack('<HHIQQQIHHHHHH',
-        2, 0xF3, 1, SPIN_ADDR, 64, 0, 0, 64, 56, 2, 64, 0, 0)
-    spin_off = 64 + 56 * 2
-    ph0 = struct.pack('<IIQQQQQQ', 1, 5, spin_off,
-        SPIN_ADDR, SPIN_ADDR, len(SPIN_CODE), len(SPIN_CODE), 0x1000)
-    nop_off = spin_off + len(SPIN_CODE)
-    ph1 = struct.pack('<IIQQQQQQ', 1, 5, nop_off,
-        NOP_ADDR, NOP_ADDR, len(NOP_CODE), len(NOP_CODE), 0x1000)
-    with open(path, 'wb') as f:
-        f.write(e_ident + elf_hdr + ph0 + ph1 + SPIN_CODE + NOP_CODE)
-    os.chmod(path, 0o755)
 
 
 def parse_trace(trace_path):
@@ -60,7 +40,10 @@ system.clk_domain = SrcClockDomain(clock='1GHz', voltage_domain=VoltageDomain())
 system.mem_mode   = 'timing'
 system.mem_ranges = [AddrRange('512MB')]
 
-system.cpu = MicroCPU(numThreads=1)
+_spin_elf = tempfile.mktemp(suffix='.elf')
+spin_addr, nop_addr = make_spin_elf(_spin_elf, arch='riscv')
+
+system.cpu = MicroCPU(numThreads=1, synth_pc_base=nop_addr)
 system.cpu.clk_domain = system.clk_domain
 system.cpu.isa     = [RiscvISA()]
 system.cpu.decoder = [RiscvDecoder(isa=system.cpu.isa[0])]
@@ -68,8 +51,6 @@ system.cpu.branchPred = BranchPredictor(numThreads=1)
 system.cpu.branchPred.conditionalBranchPred = TournamentBP(numThreads=1)
 system.cpu.createInterruptController()
 
-_spin_elf = tempfile.mktemp(suffix='.elf')
-make_riscv_spin_elf(_spin_elf)
 system.cpu.workload  = [Process(executable=_spin_elf, cmd=['spin'])]
 system.workload      = RiscvEmuLinux()
 

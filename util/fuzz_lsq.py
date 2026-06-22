@@ -11,58 +11,9 @@ import m5
 from m5.objects import *
 from m5.objects.MicroCPU import MicroCPU
 
-
-SYNTH_PC_BASE = 0x20000  # must match SYNTH_PC_BASE in src/cpu/o3/rename.cc
-
-def make_riscv_spin_elf(path):
-    """Write a minimal ELF64 RISC-V binary with two PT_LOAD segments:
-      0x10000: spin loop  — jal x0,0 × 1024 (the CPU workload)
-      0x20000: NOP page   — addi x0,x0,0 × 1024 (synthetic PC landing zone)
-
-    Injected ops use PCs from the NOP page (SYNTH_PC_BASE + seq*4) rather
-    than the spin loop.  The spin loop's jal x0,0 at 0x10000 creates a BTB
-    entry; if injected stores share that PC the commit stage detects a
-    false 'branch misprediction' (non-branch committed where BTB expected a
-    taken branch).  The NOP page has no BTB entries, so injected ops and
-    any squash-recovery fetches to 0x20000+ commit cleanly without squashes.
-    """
-    SPIN_ADDR = 0x10000
-    NOP_ADDR  = SYNTH_PC_BASE   # 0x20000
-    ENTRY     = SPIN_ADDR
-    SPIN_CODE = struct.pack('<I', 0x0000006f) * 1024  # jal x0,0  × 1024 = 4KB
-    NOP_CODE  = struct.pack('<I', 0x00000013) * 1024  # addi x0,x0,0 × 1024 = 4KB
-
-    e_ident = b'\x7fELF' + b'\x02\x01\x01\x00' + b'\x00'*8
-    # Two program headers — update e_phnum=2
-    elf_hdr = struct.pack('<HHIQQQIHHHHHH',
-        2, 0xF3, 1, ENTRY,
-        64,       # e_phoff
-        0, 0,
-        64,       # e_ehsize
-        56,       # e_phentsize
-        2,        # e_phnum  ← two segments
-        64, 0, 0,
-    )
-
-    # Segment 0: spin loop at SPIN_ADDR
-    spin_off = 64 + 56 * 2           # file offset: after elf_hdr + 2×phdr
-    ph0 = struct.pack('<IIQQQQQQ',
-        1, 5,                         # PT_LOAD, PF_R|PF_X
-        spin_off, SPIN_ADDR, SPIN_ADDR,
-        len(SPIN_CODE), len(SPIN_CODE), 0x1000,
-    )
-
-    # Segment 1: NOP page at NOP_ADDR
-    nop_off = spin_off + len(SPIN_CODE)
-    ph1 = struct.pack('<IIQQQQQQ',
-        1, 5,                         # PT_LOAD, PF_R|PF_X
-        nop_off, NOP_ADDR, NOP_ADDR,
-        len(NOP_CODE), len(NOP_CODE), 0x1000,
-    )
-
-    with open(path, 'wb') as f:
-        f.write(e_ident + elf_hdr + ph0 + ph1 + SPIN_CODE + NOP_CODE)
-    os.chmod(path, 0o755)
+# Include util dir to import shared micro_elf library
+sys.path.append(os.path.dirname(__file__))
+from micro_elf import make_spin_elf
 
 
 def parse_stat(stats_path, stat_name, block_index=0):
@@ -90,8 +41,11 @@ system.clk_domain = SrcClockDomain(clock='1GHz', voltage_domain=VoltageDomain())
 system.mem_mode = 'timing'
 system.mem_ranges = [AddrRange('512MB')]
 
+_spin_elf = tempfile.mktemp(suffix='.elf')
+spin_addr, nop_addr = make_spin_elf(_spin_elf, arch='riscv')
+
 # 2. MicroCPU Configuration
-system.cpu = MicroCPU(numThreads=1, LQEntries=16, SQEntries=8)
+system.cpu = MicroCPU(numThreads=1, LQEntries=16, SQEntries=8, synth_pc_base=nop_addr)
 system.cpu.clk_domain = system.clk_domain
 system.cpu.isa = [RiscvISA()]
 system.cpu.decoder = [RiscvDecoder(isa=system.cpu.isa[0])]
@@ -101,8 +55,6 @@ system.cpu.createInterruptController()
 
 # Spin-loop binary: jal x0,0 forever.  No branch mispredictions after the
 # first iteration, so the hello binary's squash interference is avoided.
-_spin_elf = tempfile.mktemp(suffix='.elf')
-make_riscv_spin_elf(_spin_elf)
 system.cpu.workload = [Process(executable=_spin_elf, cmd=['spin'])]
 system.workload = RiscvEmuLinux()
 

@@ -68,12 +68,14 @@ class MicroCPU : public CPU
     void drainStreamIntoRename(unsigned maxInsts);
 
     bool isStreamingPlayback() const { return _playbackStream.is_open(); }
+    Addr getSynthPcBase() const { return _synthPcBase; }
 
   private:
     OutputStream* _dumpStream = nullptr;
     bool _dumpEnabled = false;
 
     std::ifstream _playbackStream;
+    Addr _synthPcBase;
 };
 
 } // namespace o3

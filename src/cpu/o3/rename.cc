@@ -856,12 +856,14 @@ Rename::sortInsts()
                 // spin binary.  Keeps injected ops out of the BTB to avoid
                 // false 'branch mispredictions' at commit, while ensuring
                 // squash-recovery fetches land on NOPs rather than faulting.
-                // 0x20000 matches SYNTH_PC_BASE in util/fuzz_lsq.py.
-                static constexpr Addr SYNTH_PC_BASE = 0x20000ULL;
+                Addr synth_pc_base = 0x20000ULL;
+                if (auto *mcpu = dynamic_cast<MicroCPU*>(cpu)) {
+                    synth_pc_base = mcpu->getSynthPcBase();
+                }
                 InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
                 std::unique_ptr<PCStateBase> pc_ptr(
                     cpu->pcState(tid).clone());
-                pc_ptr->set(SYNTH_PC_BASE + seq_num * 4);
+                pc_ptr->set(synth_pc_base + seq_num * 4);
 
                 std::unique_ptr<PCStateBase> pred_pc_ptr(pc_ptr->clone());
                 static_inst->advancePC(*pred_pc_ptr);
