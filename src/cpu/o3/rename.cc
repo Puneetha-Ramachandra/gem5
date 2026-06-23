@@ -852,14 +852,13 @@ Rename::sortInsts()
                 StaticInstPtr static_inst = injectedInsts[tid].front();
                 injectedInsts[tid].pop_front();
 
-                // Synthetic PCs from the NOP page (0x20000+) mapped in the
-                // spin binary.  Keeps injected ops out of the BTB to avoid
-                // false 'branch mispredictions' at commit, while ensuring
+                // Synthetic PCs from the NOP page (dynamically configured, defaulting to
+                // 0x20000+) mapped in the workload binary. Keeps injected ops out of the
+                // BTB to avoid false 'branch mispredictions' at commit, while ensuring
                 // squash-recovery fetches land on NOPs rather than faulting.
-                Addr synth_pc_base = 0x20000ULL;
-                if (auto *mcpu = dynamic_cast<MicroCPU*>(cpu)) {
-                    synth_pc_base = mcpu->getSynthPcBase();
-                }
+                auto *mcpu = dynamic_cast<MicroCPU*>(cpu);
+                fatal_if(!mcpu, "Attempted to inject micro-ops into a non-MicroCPU!");
+                Addr synth_pc_base = mcpu->getSynthPcBase();
                 InstSeqNum seq_num = cpu->getAndIncrementInstSeq();
                 std::unique_ptr<PCStateBase> pc_ptr(
                     cpu->pcState(tid).clone());
