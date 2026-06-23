@@ -86,55 +86,77 @@ system.mem_ctrl.port = system.membus.mem_side_ports
 root = Root(full_system=False, system=system)
 m5.instantiate()
 
-# ---- Execution and Injection -----------------------------------------------
+# ---- Execution phase selection ---------------------------------------------
+import argparse
+parser = argparse.ArgumentParser(description="gem5-micro hello world demo with patched ELF")
+parser.add_argument('--playback', action='store_true', help="Run playback only using existing trace")
+args, unknown = parser.parse_known_args()
+
 trace_file = "micro_patched_trace.bin"
-
-print("==============================================================", flush=True)
-print("  Running Simulation & Injecting Ops Over Patched Hello Binary", flush=True)
-print("==============================================================", flush=True)
-
-# Warm up: run the binary's initial startup logic for 100,000 ticks
-print("  Warming up pipeline...", flush=True)
-m5.simulate(100000)
-
-# Enable trace dumping
-system.cpu.enableDump(trace_file)
-
-# Inject micro-ops: x0 = x0 + x0, x0 = x0 * x0
-print("  [enqueue] Injected MuAdd(rs1=0, rs2=0, rd=0)", flush=True)
-system.cpu.injectAdd(0, 0, 0)
-print("  [enqueue] Injected MuMul(rs1=0, rs2=0, rd=0)", flush=True)
-system.cpu.injectMul(0, 0, 0)
-
-# Simulate to let the injected instructions run and let the program execute print
-print("  Simulating program execution...", flush=True)
-exit_event = m5.simulate(200000000) # Enough ticks to let hello program print
-print(f"  Simulation exited: {exit_event.getCause()}", flush=True)
-
-# Close dump
-system.cpu.disableDump()
-print("==============================================================", flush=True)
-print(flush=True)
-
-
-# ---- Verification & Replay -------------------------------------------------
 trace_path = os.path.join("m5out", trace_file)
-total, active = parse_trace(trace_path)
-trace_size    = os.path.getsize(trace_path) if os.path.exists(trace_path) else 0
 
-print("==============================================================", flush=True)
-print("  MicroPlayback: Replaying from Patched Hello Trace", flush=True)
-print("==============================================================", flush=True)
-print(f"  Replaying {active} MicroISA op(s) from {trace_path}", flush=True)
-print(flush=True)
+if args.playback:
+    # ---- Playback Mode (Rerun program and stream recorded trace) -----------
+    if not os.path.exists(trace_path):
+        print(f"Error: Trace file not found at {trace_path}. Run dump phase first.", flush=True)
+        if os.path.exists(dst_hello):
+            os.remove(dst_hello)
+        sys.exit(1)
 
-system.cpu.startStreamingPlayback(trace_path)
-print("  Simulating playback...", flush=True)
-m5.simulate(10000)
-system.cpu.stopStreamingPlayback()
-print("  Playback complete.", flush=True)
-print("==============================================================", flush=True)
+    total, active = parse_trace(trace_path)
+    print("==============================================================", flush=True)
+    print("  MicroPlayback: Replaying from Patched Hello Trace (Fresh Run)", flush=True)
+    print("==============================================================", flush=True)
+    print(f"  Replaying {active} MicroISA op(s) from {trace_path}", flush=True)
+    print(flush=True)
+
+    # Warm up: run the binary's initial startup logic for 100,000 ticks,
+    # matching the dump phase timing.
+    print("  Warming up pipeline...", flush=True)
+    m5.simulate(100000)
+
+    system.cpu.startStreamingPlayback(trace_path)
+    print("  Simulating program execution with playback...", flush=True)
+    exit_event = m5.simulate()
+    system.cpu.stopStreamingPlayback()
+    print(f"  Simulation exited: {exit_event.getCause()}", flush=True)
+    print("  Playback complete.", flush=True)
+    print("==============================================================", flush=True)
+else:
+    # ---- Dump Mode (Run program, inject micro-ops, and dump trace) ---------
+    print("==============================================================", flush=True)
+    print("  Running Simulation & Injecting Ops Over Patched Hello Binary", flush=True)
+    print("==============================================================", flush=True)
+
+    # Warm up: run the binary's initial startup logic for 100,000 ticks
+    print("  Warming up pipeline...", flush=True)
+    m5.simulate(100000)
+
+    # Enable trace dumping
+    system.cpu.enableDump(trace_file)
+
+    # Inject micro-ops: x0 = x0 + x0, x0 = x0 * x0
+    print("  [enqueue] Injected MuAdd(rs1=0, rs2=0, rd=0)", flush=True)
+    system.cpu.injectAdd(0, 0, 0)
+    print("  [enqueue] Injected MuMul(rs1=0, rs2=0, rd=0)", flush=True)
+    system.cpu.injectMul(0, 0, 0)
+
+    # Simulate to let the injected instructions run and let the program execute print
+    print("  Simulating program execution...", flush=True)
+    exit_event = m5.simulate()
+    print(f"  Simulation exited: {exit_event.getCause()}", flush=True)
+
+    # Close dump
+    system.cpu.disableDump()
+    print("==============================================================", flush=True)
+    print(flush=True)
+
+    total, active = parse_trace(trace_path)
+    trace_size    = os.path.getsize(trace_path) if os.path.exists(trace_path) else 0
+    print(f"  Trace file written: {trace_size} bytes ({active} active records)", flush=True)
+    print("==============================================================", flush=True)
 
 # Clean up temporary patched executable
 if os.path.exists(dst_hello):
     os.remove(dst_hello)
+
