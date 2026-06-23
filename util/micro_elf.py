@@ -88,7 +88,8 @@ def make_spin_elf(path, arch='riscv', spin_addr=0x10000, nop_addr=None):
 
 def patch_elf_for_microisa(src_path, dst_path, arch='riscv', nop_addr=None):
     """Read an existing ELF64 executable, append a new loadable segment
-    containing NOPs (synthetic PC base), and write it to dst_path.
+    containing NOPs (synthetic PC base) and the relocated program header table,
+    and write it to dst_path.
     
     Returns:
       (entry_addr, nop_addr)
@@ -112,23 +113,38 @@ def patch_elf_for_microisa(src_path, dst_path, arch='riscv', nop_addr=None):
     if e_phentsize != 56:
         raise ValueError(f"Invalid ELF: unexpected ph entry size {e_phentsize}")
 
-    # Parse existing program headers to find max virtual address and setup alignment
-    max_addr = 0
-    program_headers = []
+    # Determine base_vaddr (the virtual address of the first PT_LOAD segment, usually 0x10000)
+    base_vaddr = None
     for i in range(e_phnum):
         offset = e_phoff + i * 56
         ph = elf_data[offset:offset+56]
-        p_type, p_flags = struct.unpack('<II', ph[:8])
-        p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align = struct.unpack('<QQQQQQ', ph[8:])
-        
+        p_type = struct.unpack('<I', ph[:4])[0]
+        p_offset, p_vaddr = struct.unpack('<QQ', ph[8:24])
         if p_type == 1: # PT_LOAD
-            max_addr = max(max_addr, p_vaddr + p_memsz)
-            program_headers.append((p_type, p_flags, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align))
+            if base_vaddr is None or p_vaddr < base_vaddr:
+                base_vaddr = p_vaddr
 
+    if base_vaddr is None:
+        base_vaddr = 0x10000
+
+    # 1. Pad the elf data to a page boundary (0x1000) so that the file offset and
+    # virtual address of the new segment are congruent modulo page size.
     align = 0x1000
-    if nop_addr is None:
-        # Align to the next page boundary
-        nop_addr = (max_addr + align - 1) & ~(align - 1)
+    padding_needed = (align - (len(elf_data) % align)) % align
+    if padding_needed > 0:
+        elf_data.extend(b'\x00' * padding_needed)
+
+    nop_offset_in_file = len(elf_data)
+
+    # 2. Compute the aligned nop_addr to match the file offset
+    # nop_addr must equal base_vaddr + nop_offset_in_file for GLIBC to resolve
+    # the relocated program header table address correctly.
+    calculated_nop_addr = base_vaddr + nop_offset_in_file
+    if nop_addr is not None and nop_addr != calculated_nop_addr:
+        print(f"Warning: Overriding requested nop_addr {hex(nop_addr)} to "
+              f"{hex(calculated_nop_addr)} to satisfy ELF loading congruence "
+              f"and glibc program header lookup requirements.")
+    nop_addr = calculated_nop_addr
 
     # Prepare NOP instructions
     if arch == 'riscv':
@@ -138,41 +154,43 @@ def patch_elf_for_microisa(src_path, dst_path, arch='riscv', nop_addr=None):
     else:
         raise ValueError(f"Unsupported architecture: {arch}")
 
-    # To add a new program header cleanly without overwriting existing sections,
-    # we append the new NOP code first.
-    nop_offset_in_file = len(elf_data)
+    # Append NOPs to file
     elf_data.extend(nop_code)
 
-    # Create the new program header
+    # 3. Relocate program header table to the end of the file (immediately after NOPs)
+    new_ph_offset_in_file = len(elf_data)
+    new_ph_count = e_phnum + 1
+    new_ph_table_size = new_ph_count * 56
+
+    # Create the new program header: maps the NOP page AND the new program header table
+    # so that they are fully loaded into memory.
     new_ph = struct.pack('<IIQQQQQQ',
         1, 5,                       # p_type=1 (PT_LOAD), p_flags=5 (PF_R|PF_X)
         nop_offset_in_file,         # p_offset
         nop_addr,                   # p_vaddr
         nop_addr,                   # p_paddr
-        len(nop_code),              # p_filesz
-        len(nop_code),              # p_memsz
+        len(nop_code) + new_ph_table_size,  # p_filesz
+        len(nop_code) + new_ph_table_size,  # p_memsz
         align                       # p_align
     )
 
-    # Now we append the updated program header table to the end of the file
-    new_ph_offset_in_file = len(elf_data)
-    
-    # Write existing program headers
+    # Append existing program headers
     for i in range(e_phnum):
         offset = e_phoff + i * 56
         elf_data.extend(elf_data[offset:offset+56])
         
-    # Write the new program header
+    # Append the new program header
     elf_data.extend(new_ph)
 
-    # Update ELF Header at the start of the file:
-    # 1. Update e_phoff to point to the new location at the end of the file
+    # 4. Update ELF Header:
+    # Point e_phoff to the new relocated table
     elf_data[32:40] = struct.pack('<Q', new_ph_offset_in_file)
-    # 2. Increment e_phnum by 1
-    elf_data[56:58] = struct.pack('<H', e_phnum + 1)
+    # Increment e_phnum
+    elf_data[56:58] = struct.pack('<H', new_ph_count)
 
     with open(dst_path, 'wb') as f:
         f.write(elf_data)
         
     os.chmod(dst_path, 0o755)
     return e_entry, nop_addr
+
